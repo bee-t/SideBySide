@@ -1,107 +1,40 @@
-﻿using HtmlAgilityPack;
+﻿using Microsoft.ML;
+using Microsoft.ML.Data;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
-using Xamarin.Forms;
-
-using Microsoft.ML;
-using Microsoft.ML.Data;
-using static Microsoft.ML.DataOperationsCatalog;
 using System.IO;
+using static Microsoft.ML.DataOperationsCatalog;
 
-namespace SideBySide
+namespace SideBySide.Analysis
 {
-    public partial class MainPage : ContentPage
+    public class DataAnalysis
     {
-        public MainPage()
+        public List<string> PredictionResult { get; set; }
+        public ITransformer PredictionModel { get; set; }
+        public MLContext MLContext { get; set; }
+        public TrainTestData TrainTestData { get; set; }
+
+        /// <summary>
+        /// When this object is created it initializes model, context, trainandtest data objects
+        /// </summary>
+        public DataAnalysis()
         {
-            InitializeComponent();
-
-            string website = $"cnn.com";
-            string keyword = $"Ukraine";
-
-            string google = $"https://www.google.com/search?q=site%3A{website}+%22{keyword}";
-
-            HtmlWeb web = new HtmlWeb();
-
-            var htmlDoc = web.Load(google);
-
-            var htmlNode = htmlDoc.DocumentNode.SelectSingleNode("//body");
-            IEnumerable<string> parsedHtml = this.HtmlAgilityPackParse(htmlNode.OuterHtml);
-
-            string URLs = null;
-
-            foreach (var url in parsedHtml)
-            {
-                if (url.Contains("http"))
-                {
-                    URLs += url + "\n\n";
-                }
-            }
-
-            Debug.WriteLine(URLs);
-
-            var htmlDocFromURL = web.Load(parsedHtml.ElementAt(1));
-
-            var htmlNodeFromURL = htmlDocFromURL.DocumentNode.SelectSingleNode("//body").InnerText;
-
-            string[] splittedContent = htmlNodeFromURL.Split(',','.',':');
-            int count = 0;
-
-            foreach(var content in splittedContent)
-            {
-                if (content.Contains(keyword))
-                {
-                    splittedContent[count] = content;
-                }
-                count++;
-            }
-
-            // random 8 sentences
-            int numberOfSentences = splittedContent.Length / 2;
-            string[] SelectedSentences = new string[numberOfSentences];
-            Random random = new Random();
-            
-            // select randomly 5 sentences from the list of sentences we have
-            for(int i = 0; i < numberOfSentences; i++)
-            {
-                if(random.Next(splittedContent.Length) < splittedContent.Length)
-                {
-                    SelectedSentences[i] = splittedContent[random.Next(splittedContent.Length)]; 
-                }
-            }
-
-            // getting their sentiments
-            List<SentimentData> sentiments = new List<SentimentData>();
-
-            foreach (var sentences in SelectedSentences)
-            {
-                sentiments.Add( new SentimentData { SentimentText = sentences });
-            }
-
-            string information = "";
-            foreach(var result in PerformSentimentAnalysis(sentiments))
-            {
-                information += result + " \n\n";
-            }
-            //var ss = ExtractText(htmlNodeFromURL.InnerHtml);
-
-            this.Label.Text = information;
-            
+            this.PerformSentimentAnalysis();
         }
 
-        private List<string> PerformSentimentAnalysis(IEnumerable<SentimentData> sentiments = null)
+        private void PerformSentimentAnalysis(IEnumerable<SentimentData> sentiments = null)
         {
-            MLContext mlContext = new MLContext();
-            TrainTestData splitDataView = LoadData(mlContext);
+            MLContext = new MLContext();
+
+            // load data
+            TrainTestData = LoadData(MLContext);
 
             // build - train model
-            ITransformer model = BuildAndTrainModel(mlContext, splitDataView.TrainSet);
-            Evaluate(mlContext, model, splitDataView.TestSet);
-            UseModelWithSingleItem(mlContext, model);
-
-            return MySentimentAnalysis(mlContext, model, sentiments);
+            this.PredictionModel = BuildAndTrainModel(MLContext, TrainTestData.TrainSet);
+            Evaluate(MLContext, PredictionModel, TrainTestData.TestSet);
+            UseModelWithSingleItem(MLContext, PredictionModel);
+            AnalyseBatchOfData(MLContext, PredictionModel, sentiments);
         }
 
         private TrainTestData LoadData(MLContext mlContext)
@@ -117,12 +50,12 @@ namespace SideBySide
             //Extract and transform the data
             var estimator = mlContext.Transforms.Text.
                 FeaturizeText(
-                outputColumnName: "Features", 
+                outputColumnName: "Features",
                 inputColumnName: nameof(SentimentData.SentimentText))
                 //Add a learning algorithm
                 .Append(
                 mlContext.BinaryClassification.Trainers.SdcaLogisticRegression(
-                    labelColumnName: "Label", 
+                    labelColumnName: "Label",
                     featureColumnName: "Features"));
 
             //Train the model
@@ -135,7 +68,7 @@ namespace SideBySide
             return model;
         }
 
-        void Evaluate(MLContext mlContext, ITransformer model, IDataView splitTestSet)
+        public void Evaluate(MLContext mlContext, ITransformer model, IDataView splitTestSet)
         {
             Debug.WriteLine("=============== Evaluating Model accuracy with Test data===============");
             IDataView predictions = model.Transform(splitTestSet);
@@ -150,7 +83,14 @@ namespace SideBySide
             Debug.WriteLine("=============== End of model evaluation ===============");
         }
 
-        string UseModelWithSingleItem(MLContext mlContext, ITransformer model)
+        /// <summary>
+        /// returns string with prediction information
+        /// requires context and model
+        /// </summary>
+        /// <param name="mlContext"></param>
+        /// <param name="model"></param>
+        /// <returns></returns>
+        public string UseModelWithSingleItem(MLContext mlContext, ITransformer model)
         {
             PredictionEngine<SentimentData, SentimentPrediction> predictionFunction = mlContext.Model.CreatePredictionEngine<SentimentData, SentimentPrediction>(model);
 
@@ -173,10 +113,15 @@ namespace SideBySide
             return $"Sentiment: {resultPrediction.SentimentText} | Prediction: {(Convert.ToBoolean(resultPrediction.Prediction) ? "Positive" : "Negative")} | Probability: {resultPrediction.Probability} ";
         }
 
-        // run analysis on batched items
-        List<string> MySentimentAnalysis(MLContext mlContext, ITransformer model, IEnumerable<SentimentData> sentiments = null)
+        /// <summary>
+        /// This method needs batches of sentiments and it executes the prediction on them
+        /// </summary>
+        /// <param name="mlContext"></param>
+        /// <param name="model"></param>
+        /// <param name="sentiments"></param>
+        public void AnalyseBatchOfData(MLContext mlContext, ITransformer model, IEnumerable<SentimentData> sentiments = null)
         {
-            if(sentiments == null)
+            if (sentiments == null)
             {
                 sentiments = new[]
                 {
@@ -197,40 +142,18 @@ namespace SideBySide
 
             // Use model to predict whether comment data is Positive (1) or Negative (0).
             IEnumerable<SentimentPrediction> predictedResults = mlContext.Data.CreateEnumerable<SentimentPrediction>(predictions, reuseRowObject: false);
+
             Debug.WriteLine("\n");
-            List<string> predictionResult = new List<string>();
+
+            PredictionResult = new List<string>();
+
             Debug.WriteLine("=============== Prediction Test of loaded model with multiple samples ===============");
             foreach (SentimentPrediction prediction in predictedResults)
             {
-                predictionResult.Add($"Sentiment: {prediction.SentimentText} | Prediction: {(Convert.ToBoolean(prediction.Prediction) ? "Positive" : "Negative")} | Probability: {prediction.Probability}");
+                PredictionResult.Add($"Sentiment: {prediction.SentimentText} | Prediction: {(Convert.ToBoolean(prediction.Prediction) ? "Positive" : "Negative")} | Probability: {prediction.Probability}");
                 Debug.WriteLine($"Sentiment: {prediction.SentimentText} | Prediction: {(Convert.ToBoolean(prediction.Prediction) ? "Positive" : "Negative")} | Probability: {prediction.Probability} ");
             }
             Debug.WriteLine("=============== End of predictions ===============");
-
-            return predictionResult;
-        }
-
-        // get all urls from html node
-        public IEnumerable<string> HtmlAgilityPackParse(string html)
-        {
-            HtmlDocument htmlSnippet = new HtmlDocument();
-            htmlSnippet.LoadHtml(html);
-
-            List<string> hrefTags = new List<string>();
-
-            foreach (HtmlNode link in htmlSnippet.DocumentNode.SelectNodes("//a[@href]"))
-            {
-                HtmlAttribute att = link.Attributes["href"];
-
-                if (att.Value.Contains("http"))
-                {
-                    if(att.Value.Contains("news") || att.Value.Contains(".html")){
-                        hrefTags.Add(att.Value);
-                    }
-                }
-            }
-
-            return hrefTags;
         }
     }
 }

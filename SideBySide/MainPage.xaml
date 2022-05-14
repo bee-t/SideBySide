@@ -1,13 +1,11 @@
 ﻿<?xml version="1.0" encoding="utf-8" ?>
 <ContentPage xmlns="http://xamarin.com/schemas/2014/forms"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
-             x:Class="SideBySide.MainPage">
+             x:Class="SideBySide.MainPage"
+             BackgroundColor="White">
 
     <StackLayout>
-        <!--<Entry x:Name="Entry" HorizontalOptions="FillAndExpand" VerticalOptions="FillAndExpand" > </Entry>-->
-        <WebView x:Name="Webview" 
-                 HorizontalOptions="FillAndExpand" 
-                 VerticalOptions="FillAndExpand" />
+        <Label x:Name="Label" HorizontalOptions="CenterAndExpand" VerticalOptions="CenterAndExpand" FontSize="20" TextColor="Black" Margin="20"></Label>
     </StackLayout>
 
 </ContentPage>
